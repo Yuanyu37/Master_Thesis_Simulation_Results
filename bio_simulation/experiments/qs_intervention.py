@@ -9,7 +9,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from models.parameters import Parameters
 from models.core_model import run_simulation, ode_system
-from utils.visualization import plot_basic_results, plot_parameter_sensitivity
+from utils.visualization import plot_basic_results, plot_parameter_variation
 
 def run_qs_parameter_variation():
     print("Running quorum sensing parameter variation study...")

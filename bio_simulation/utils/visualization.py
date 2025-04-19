@@ -68,61 +68,6 @@ def plot_basic_results(results, params, save_path=None):
 
     plt.show()
 
-def plot_spatial_results(results, params, time_point, save_path=None):
-    # Find the index closest to the specified time point
-    time_idx = np.argmin(np.abs(results['t'] - time_point))
-    actual_time = results['t'][time_idx]
-
-    plt.figure(figsize=(12, 10))
-
-    # Get the number of layers
-    n_layers = results['I_layers'].shape[1]
-    depths = np.linspace(0, 1, n_layers)
-
-    # 1. Biomass distribution
-    plt.subplot(2, 2, 1)
-    plt.plot(depths, results['I_layers'][time_idx], 'k-', label='Inert biomass (I)')
-    plt.plot(depths, results['A_layers'][time_idx], 'b-', label='Downregulated biomass (A)')
-    plt.plot(depths, results['B_layers'][time_idx], 'g-', label='Upregulated biomass (B)')
-    plt.xlabel('Relative depth')
-    plt.ylabel('Biomass volume fraction')
-    plt.title(f'Biomass distribution (t={actual_time:.2f})')
-    plt.legend()
-    plt.grid(True)
-
-    # 2. AHL distribution
-    plt.subplot(2, 2, 2)
-    plt.plot(depths, results['S_layers'][time_idx], 'r-')
-    plt.axhline(y=params.tau, color='gray', linestyle='--', label='QS threshold')
-    plt.xlabel('Relative depth')
-    plt.ylabel('AHL concentration [nM]')
-    plt.title(f'AHL distribution (t={actual_time:.2f})')
-    plt.legend()
-    plt.grid(True)
-
-    # 3. Nutrient distribution
-    plt.subplot(2, 2, 3)
-    plt.plot(depths, results['N_layers'][time_idx], 'g-')
-    plt.xlabel('Relative depth')
-    plt.ylabel('Nutrient concentration')
-    plt.title(f'Nutrient distribution (t={actual_time:.2f})')
-    plt.grid(True)
-
-    # 4. Antibiotic distribution
-    plt.subplot(2, 2, 4)
-    plt.plot(depths, results['C_layers'][time_idx], 'r-')
-    plt.xlabel('Relative depth')
-    plt.ylabel('Antibiotic concentration')
-    plt.title(f'Antibiotic distribution (t={actual_time:.2f})')
-    plt.grid(True)
-
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=300)
-
-    plt.show()
-
 def plot_parameter_variation(results, parameter_name, save_path=None):
     plt.figure(figsize=(15, 12))
 

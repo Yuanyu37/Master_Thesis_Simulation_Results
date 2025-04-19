@@ -2,32 +2,35 @@ import numpy as np
 from scipy.integrate import solve_ivp
 
 def ode_system(t, y, params):
-    # Unpack variables
-    I, A, B, N, C, S = y
+    if len(y) == 6:
+        I, A, B, N, C, S = y
+        QSI = 0.0
+    else:
+        I, A, B, N, C, S, QSI = y
 
-    # Prevent variables from becoming negative
+    # Prevent negative values for variables
     I = max(0, I)
     A = max(0, A)
     B = max(0, B)
     N = max(0, N)
     C = max(0, C)
     S = max(0, S)
+    QSI = max(0, QSI)
 
     # Calculate total biomass
     M = I + A + B
 
-    # Antibiotic control - added at specific time points
+    # Antibiotic control - add at specific time point
     C_external = 0.0
     if t >= params.T_antibiotic:
         C_external = params.C_inf
 
-    # QS inhibitor control
-    gamma = params.gamma
-    tau = params.tau
-    if params.T_QSI is not None and t >= params.T_QSI:
-        gamma = gamma * 10  # Increase AHL degradation rate by 10 times
+    # QSI control
+    QSI_external = 0.0
+    if params.add_QSI and t >= params.T_QSI:
+        QSI_external = params.QSI_inf
 
-    # Calculate Hill function, adding safety checks to prevent numerical issues
+    # Calculate Hill functions
     if C == 0:
         Hill_C_A = 0
         Hill_C_B = 0
@@ -37,20 +40,28 @@ def ode_system(t, y, params):
 
     if S == 0:
         Hill_S_up = 0
-        Hill_S_down = 1  # When S = 0, downregulation is complete
+        Hill_S_down = 1
     else:
-        Hill_S_up = (S ** params.n2) / (tau ** params.n2 + S ** params.n2)
-        Hill_S_down = (tau ** params.n2) / (tau ** params.n2 + S ** params.n2)
+        Hill_S_up = (S ** params.n2) / (params.tau ** params.n2 + S ** params.n2)
+        Hill_S_down = (params.tau ** params.n2) / (params.tau ** params.n2 + S ** params.n2)
+
+    # Calculate QSI inhibition factor (range 0-1, 0 means complete inhibition, 1 means no inhibition)
+    if QSI == 0:
+        QSI_inhibition = 1.0  # No inhibition
+    else:
+        QSI_inhibition = params.QSI_inhibition_constant ** params.QSI_hill_exponent / \
+                         (params.QSI_inhibition_constant ** params.QSI_hill_exponent +
+                          QSI ** params.QSI_hill_exponent)
 
     # 1. Inert biomass equation
     dI_dt = params.beta_A * Hill_C_A * A + params.beta_B * Hill_C_B * B
 
-    # 2. Downregulated biomass equation
+    # 2. Down-regulated biomass equation
     growth_A = (params.mu_A * N * A) / (params.K_N + N)
     dA_dt = growth_A - params.beta_A * Hill_C_A * A + \
             params.psi * Hill_S_down * B - params.omega * Hill_S_up * A - params.k_A * A
 
-    # 3. Upregulated biomass equation
+    # 3. Up-regulated biomass equation
     growth_B = (params.mu_B * N * B) / (params.K_N + N)
     dB_dt = growth_B - params.beta_B * Hill_C_B * B - \
             params.psi * Hill_S_down * B + params.omega * Hill_S_up * A - params.k_B * B
@@ -64,21 +75,32 @@ def ode_system(t, y, params):
     antibiotic_consumption = params.delta_A * Hill_C_A * A + params.delta_B * Hill_C_B * B
     dC_dt = params.boundary_transfer * (C_external - C) - antibiotic_consumption - params.theta * C
 
-    # 6. AHL signaling molecule equation
-    base_production = params.sigma_0 * (A + B)
-    stress_production = params.mu_S * (A + B) * C / (params.K_C_prime + C)
-    up_production = params.sigma_S * Hill_S_up * B
+    # 6. AHL signal molecule equation
+    base_production = params.sigma_0 * (A + B) * QSI_inhibition  # QSI inhibits base production
+    stress_production = params.mu_S * (A + B) * C / (params.K_C_prime + C) * QSI_inhibition  # QSI inhibits stress production
+    up_production = params.sigma_S * Hill_S_up * B * QSI_inhibition  # QSI inhibits up-regulated state production
 
-    dS_dt = base_production + stress_production + up_production - gamma * S - params.boundary_transfer * S
+    dS_dt = base_production + stress_production + up_production - params.gamma * S - params.boundary_transfer * S
 
-    return [dI_dt, dA_dt, dB_dt, dN_dt, dC_dt, dS_dt]
+    # 7. QSI equation
+    dQSI_dt = params.boundary_transfer * (QSI_external - QSI) - params.QSI_decay * QSI
+
+    # If original input does not include QSI, return 6 values
+    if len(y) == 6:
+        return [dI_dt, dA_dt, dB_dt, dN_dt, dC_dt, dS_dt]
+    else:
+        return [dI_dt, dA_dt, dB_dt, dN_dt, dC_dt, dS_dt, dQSI_dt]
 
 def ode_system_enhanced(t, y, params):
     # Initially based on the original ODE system
     derivatives = ode_system(t, y, params)
 
-    # Add event detection
-    I, A, B, N, C, S = y
+    # Unpack variables based on input length
+    if len(y) == 6:
+        I, A, B, N, C, S = y
+    else:
+        I, A, B, N, C, S, QSI = y
+
     if not hasattr(ode_system_enhanced, "qsi_activated"):
         ode_system_enhanced.qsi_activated = False
 
@@ -90,32 +112,41 @@ def ode_system_enhanced(t, y, params):
 
 def run_simulation(params, initial_conditions=None, t_span=(0, 60), t_points=500):
     if initial_conditions is None:
-        initial_conditions = [0.0, 0.05, 0.0, 1.0, 0.0, 0.0]  # [I0, A0, B0, N0, C0, S0]
+        if hasattr(params, 'add_QSI') and params.add_QSI:
+            initial_conditions = [0.0, 0.05, 0.0, 1.0, 0.0, 0.0, 0.0]
+        else:
+            initial_conditions = [0.0, 0.05, 0.0, 1.0, 0.0, 0.0]
+    else:
+        if hasattr(params, 'add_QSI') and params.add_QSI and len(initial_conditions) == 6:
+            initial_conditions = initial_conditions + [0.0]
 
     # Set time points
     t_eval = np.linspace(t_span[0], t_span[1], t_points)
 
-    # Solve the ODE system
+    # Solve ODE system
     print("Solving ODE system...")
     solution = solve_ivp(ode_system_enhanced, t_span, initial_conditions,
                          args=(params,), method='Radau',
                          t_eval=t_eval, rtol=1e-6, atol=1e-9)
-
     if not solution.success:
         print("Failed to solve ODE system!")
         return None
 
-    # Process results
     t = solution.t
-    I, A, B, N, C, S = solution.y
 
-    # Calculate total active biomass and other indicators
+    if len(initial_conditions) == 7:
+        I, A, B, N, C, S, QSI = solution.y
+    else:
+        I, A, B, N, C, S = solution.y
+        QSI = np.zeros_like(t)  # Create zero array for simulations without QSI
+
+    # Calculate total active biomass and other metrics
     total_active = A + B
     total_biomass = I + A + B
 
-    # Safely calculate ratios to avoid division by zero
+    # Safely calculate ratios, avoiding division by zero
     R = np.zeros_like(total_biomass)  # Active ratio
-    Z = np.zeros_like(total_active)  # Downregulated ratio
+    Z = np.zeros_like(total_active)  # Down-regulated ratio
 
     for i in range(len(total_biomass)):
         if total_biomass[i] > 1e-10:
@@ -133,11 +164,13 @@ def run_simulation(params, initial_conditions=None, t_span=(0, 60), t_points=500
           (params.mu_B * N * B) / (params.K_N + N) -
           params.k_A * A - params.k_B * B)
 
-    return {
+    results = {
         't': t,
         'I': I, 'A': A, 'B': B,
         'N': N, 'C': C, 'S': S,
+        'QSI': QSI,
         'total_active': total_active,
         'total_biomass': total_biomass,
         'Z': Z, 'R': R, 'BG': BG
     }
+    return results
